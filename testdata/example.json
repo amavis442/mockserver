@@ -20,5 +20,35 @@
       "headers": { "Content-Type": "application/json" },
       "body": { "id": "abc-123", "name": "Test User" }
     }
+  },
+  {
+    "id": "api-v2-users",
+    "priority": 80,
+    "request": {
+      "method": "GET",
+      "path": "/api/v2/users",
+      "headers": { "Accept": "application/json" }
+    },
+    "response": {
+      "status": 200,
+      "headers": { "Content-Type": "application/json" },
+      "body": {
+        "users": [
+          { "id": 1, "name": "Alice" },
+          { "id": 2, "name": "Bob" }
+        ]
+      }
+    }
+  },
+  {
+    "id": "me-protected",
+    "priority": 90,
+    "request": { "method": "GET", "path": "/api/me" },
+    "response": {
+      "status": 200,
+      "headers": { "Content-Type": "application/json" },
+      "body": { "id": 1, "name": "Authenticated User", "email": "user@example.com" }
+    },
+    "auth": { "required": true }
   }
 ]
