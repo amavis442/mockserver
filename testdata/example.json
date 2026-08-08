@@ -1,0 +1,24 @@
+[
+  {
+    "id": "hello-world",
+    "priority": 100,
+    "times": { "unlimited": true },
+    "request": { "method": "GET", "path": "/hello" },
+    "response": {
+      "status": 200,
+      "headers": { "Content-Type": "application/json" },
+      "body": { "message": "Hello from MockServer!" }
+    }
+  },
+  {
+    "id": "create-user",
+    "priority": 50,
+    "times": { "remaining": 3 },
+    "request": { "method": "POST", "path": "/api/user" },
+    "response": {
+      "status": 201,
+      "headers": { "Content-Type": "application/json" },
+      "body": { "id": "abc-123", "name": "Test User" }
+    }
+  }
+]
