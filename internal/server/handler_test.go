@@ -569,3 +569,69 @@ func TestAuth_NotRequired_AllowsWithoutToken(t *testing.T) {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 }
+
+// ── Refresh token ───────────────────────────────────────────────────────
+
+func TestAuth_RefreshToken(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	resp, err := s.Client().Post(s.URL+"/__admin/auth/token", "application/json",
+		bytes.NewReader([]byte(`{"subject":"u1"}`)))
+	if err != nil {
+		t.Fatalf("POST token: %v", err)
+	}
+	defer resp.Body.Close()
+	var info auth.TokenInfo
+	json.NewDecoder(resp.Body).Decode(&info)
+	if info.RefreshToken == "" {
+		t.Fatal("expected refresh_token in response")
+	}
+
+	refreshBody := `{"refresh_token":"` + info.RefreshToken + `"}`
+	refreshResp, err := s.Client().Post(s.URL+"/__admin/auth/refresh", "application/json",
+		bytes.NewReader([]byte(refreshBody)))
+	if err != nil {
+		t.Fatalf("POST refresh: %v", err)
+	}
+	defer refreshResp.Body.Close()
+	if refreshResp.StatusCode != http.StatusCreated {
+		t.Fatalf("refresh status = %d, want 201", refreshResp.StatusCode)
+	}
+
+	var newInfo auth.TokenInfo
+	json.NewDecoder(refreshResp.Body).Decode(&newInfo)
+	if newInfo.Token == info.Token {
+		t.Error("refreshed access token should be new")
+	}
+	if newInfo.RefreshToken == info.RefreshToken {
+		t.Error("refresh token should be rotated")
+	}
+
+	addExpectation(t, s, domain.Expectation{
+		Request:  domain.RequestMatcher{Method: "GET", Path: "/secure"},
+		Response: domain.Response{Status: 200},
+		Auth:     &domain.AuthConfig{Required: true},
+	})
+
+	// Old token rejected.
+	req, _ := http.NewRequest(http.MethodGet, s.URL+"/secure", nil)
+	req.Header.Set("Authorization", "Bearer "+info.Token)
+	r, _ := s.Client().Do(req)
+	r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("old token status = %d, want 401", r.StatusCode)
+	}
+
+	// New token accepted.
+	req2, _ := http.NewRequest(http.MethodGet, s.URL+"/secure", nil)
+	req2.Header.Set("Authorization", "Bearer "+newInfo.Token)
+	r2, err := s.Client().Do(req2)
+	if err != nil {
+		t.Fatalf("GET /secure with new token: %v", err)
+	}
+	defer r2.Body.Close()
+	if r2.StatusCode != 200 {
+		t.Errorf("new token after refresh: status = %d, want 200", r2.StatusCode)
+	}
+}

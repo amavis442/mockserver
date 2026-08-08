@@ -30,6 +30,7 @@ func NewHandler(store *engine.Store, tokenStore *auth.TokenStore) http.Handler {
 	mux.HandleFunc("POST "+adminPrefix+"auth/token", adminIssueToken(tokenStore))
 	mux.HandleFunc("GET "+adminPrefix+"auth/tokens", adminListTokens(tokenStore))
 	mux.HandleFunc("DELETE "+adminPrefix+"auth/tokens", adminRevokeAllTokens(tokenStore))
+	mux.HandleFunc("POST "+adminPrefix+"auth/refresh", adminRefreshToken(tokenStore))
 
 	// Mock catch-all
 	mux.HandleFunc("/", mockHandler(store, tokenStore))
@@ -115,6 +116,28 @@ func adminRevokeAllTokens(ts *auth.TokenStore) http.HandlerFunc {
 			ts.RevokeAll()
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "tokens revoked"})
+	}
+}
+
+func adminRefreshToken(ts *auth.TokenStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ts == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "token store not available"})
+			return
+		}
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		newInfo, ok := ts.Refresh(req.RefreshToken, 1*time.Hour)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired refresh token"})
+			return
+		}
+		writeJSON(w, http.StatusCreated, newInfo)
 	}
 }
 
