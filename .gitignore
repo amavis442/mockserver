@@ -1,8 +1,8 @@
 # Binaries
 /bin/
 /dist/
-mockserver
-mockserver.exe
+/mockserver
+/mockserver.exe
 
 # Go build/test artifacts
 *.test

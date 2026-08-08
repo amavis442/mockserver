@@ -29,6 +29,24 @@ curl -X POST localhost:8080/__admin/expectations \
 curl localhost:8080/hello   # -> "world"
 ```
 
+### TLS (HTTPS)
+
+Use `--tls-self-signed` for local development — a certificate is generated in
+memory at startup, valid for `localhost` for 365 days:
+
+```bash
+mockserver --tls-self-signed --port 8443
+curl -k https://localhost:8443/hello   # -k skips certificate verification
+```
+
+Or provide your own certificate and key:
+
+```bash
+mockserver --tls-cert cert.pem --tls-key key.pem --port 8443
+```
+
+The server defaults to plain HTTP when no TLS flags are given.
+
 ## Expectation format
 
 An expectation ties a request matcher to a response. The JSON shape is the same for
