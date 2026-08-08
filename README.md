@@ -6,7 +6,7 @@ so it can be used from any project (Go, Laravel, Symfony, C#/.NET, ...).
 
 ## Status
 
-v1 — stable. Method + path matching, admin API, JSON config.
+v2 — stable. Method/path/header matching, TLS, bearer token auth, refresh tokens, admin API, JSON config.
 
 ## Concept
 
@@ -46,6 +46,42 @@ mockserver --tls-cert cert.pem --tls-key key.pem --port 8443
 ```
 
 The server defaults to plain HTTP when no TLS flags are given.
+
+### Auth flow (bearer tokens)
+
+```bash
+# Start with the example config (includes a protected endpoint /api/me)
+mockserver --tls-self-signed --port 8443 --config testdata/example.json
+
+# 1. Issue a token
+TOKENS=$(curl -sk -X POST https://localhost:8443/__admin/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"subject":"pat"}')
+ACCESS_TOKEN=$(echo "$TOKENS" | jq -r .token)
+REFRESH_TOKEN=$(echo "$TOKENS" | jq -r .refresh_token)
+
+# 2. Public endpoint — no auth needed
+curl -sk https://localhost:8443/hello
+# → {"message": "Hello from MockServer!"}
+
+# 3. Protected endpoint — requires Bearer token
+curl -sk -H "Authorization: Bearer $ACCESS_TOKEN" https://localhost:8443/api/me
+# → {"id":1,"name":"Authenticated User"}
+
+# 4. Without token → 401
+curl -sk https://localhost:8443/api/me
+# → {"error":"missing Authorization: Bearer"}
+
+# 5. Refresh → old token revoked, new pair issued
+REFRESHED=$(curl -sk -X POST https://localhost:8443/__admin/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}")
+NEW_TOKEN=$(echo "$REFRESHED" | jq -r .token)
+
+# 6. Header-matched endpoint
+curl -sk -H "Accept: application/json" https://localhost:8443/api/v2/users
+# → {"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}
+```
 
 ## Expectation format
 
