@@ -378,3 +378,76 @@ func TestAdminRouteNotMatchedAsMock(t *testing.T) {
 		t.Error("admin route was caught by mock handler (should be real admin list)")
 	}
 }
+
+// ── Header matching ────────────────────────────────────────────────────
+
+func TestMock_HeaderMatching(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	addExpectation(t, s, domain.Expectation{
+		Request: domain.RequestMatcher{
+			Method:  "GET",
+			Path:    "/secure",
+			Headers: map[string]string{"Authorization": "Bearer secret"},
+		},
+		Response: domain.Response{Status: 200, Body: json.RawMessage(`"ok"`)},
+	})
+
+	// Match with correct header
+	req, _ := http.NewRequest(http.MethodGet, s.URL+"/secure", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := s.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /secure: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// No match with wrong header value
+	req2, _ := http.NewRequest(http.MethodGet, s.URL+"/secure", nil)
+	req2.Header.Set("Authorization", "Bearer wrong")
+	resp2, err := s.Client().Do(req2)
+	if err != nil {
+		t.Fatalf("GET /secure (wrong header): %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Errorf("wrong header: status = %d, want 404", resp2.StatusCode)
+	}
+
+	// No match without header
+	resp3 := mustGet(t, s, "/secure")
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusNotFound {
+		t.Errorf("missing header: status = %d, want 404", resp3.StatusCode)
+	}
+}
+
+func TestMock_HeaderMatchingCaseInsensitive(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	addExpectation(t, s, domain.Expectation{
+		Request: domain.RequestMatcher{
+			Method:  "GET",
+			Path:    "/x",
+			Headers: map[string]string{"X-Custom": "val"},
+		},
+		Response: domain.Response{Status: 200, Body: json.RawMessage(`"ok"`)},
+	})
+
+	// Different casing
+	req, _ := http.NewRequest(http.MethodGet, s.URL+"/x", nil)
+	req.Header.Set("x-custom", "val")
+	resp, err := s.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /x: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}

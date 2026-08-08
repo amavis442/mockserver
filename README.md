@@ -61,7 +61,10 @@ both the startup config file and the `POST /__admin/expectations` body:
   },
   "request": {
     "method": "GET",            // exact match
-    "path": "/api/user"         // exact match
+    "path": "/api/user",        // exact match
+    "headers": {                // optional; when set, all must match (case-insensitive keys)
+      "Authorization": "Bearer ***"
+    }
   },
   "response": {
     "status": 200,              // HTTP status code
