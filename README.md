@@ -49,6 +49,8 @@ The server defaults to plain HTTP when no TLS flags are given.
 
 ### Auth flow (bearer tokens)
 
+**Linux/macOS (bash + jq):**
+
 ```bash
 # Start with the example config (includes a protected endpoint /api/me)
 mockserver --tls-self-signed --port 8443 --config testdata/example.json
@@ -81,6 +83,37 @@ NEW_TOKEN=$(echo "$REFRESHED" | jq -r .token)
 # 6. Header-matched endpoint
 curl -sk -H "Accept: application/json" https://localhost:8443/api/v2/users
 # → {"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}
+```
+
+**Windows (PowerShell):**
+
+```powershell
+# Start with the example config
+.\mockserver.exe --tls-self-signed --port 8443 --config testdata\example.json
+
+# 1. Issue a token (in another terminal)
+$tokens = curl.exe -sk -X POST https://localhost:8443/__admin/auth/token `
+  -H "Content-Type: application/json" `
+  -d '{"subject":"pat"}' | ConvertFrom-Json
+$access = $tokens.token
+$refresh = $tokens.refresh_token
+
+# 2. Public endpoint
+curl.exe -sk https://localhost:8443/hello
+
+# 3. Protected endpoint
+curl.exe -sk -H "Authorization: Bearer $access" https://localhost:8443/api/me
+
+# 4. Without token → 401
+curl.exe -sk https://localhost:8443/api/me
+
+# 5. Refresh
+$refreshed = curl.exe -sk -X POST https://localhost:8443/__admin/auth/refresh `
+  -H "Content-Type: application/json" `
+  -d "{`"refresh_token`":`"$refresh`"}" | ConvertFrom-Json
+
+# 6. Header-matched endpoint
+curl.exe -sk -H "Accept: application/json" https://localhost:8443/api/v2/users
 ```
 
 ## Expectation format
