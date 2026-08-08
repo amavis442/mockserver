@@ -7,50 +7,63 @@ import (
 	"time"
 )
 
-// TokenInfo holds metadata about an issued token.
+// TokenInfo holds metadata about an issued token. Both the access token and
+// its paired refresh token are included.
 type TokenInfo struct {
-	Token     string    `json:"token"`
-	Subject   string    `json:"subject"`
-	IssuedAt  time.Time `json:"issued_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	Subject      string    `json:"subject"`
+	IssuedAt     time.Time `json:"issued_at"`
+	ExpiresAt    time.Time `json:"expires_at"`
 }
 
 // TokenStore is a thread-safe, in-memory store for bearer tokens. Tokens are
 // random hex strings — no real JWT cryptography is performed (that is the
 // responsibility of the real server being mocked).
 type TokenStore struct {
-	mu     sync.RWMutex
-	tokens map[string]TokenInfo
+	mu            sync.RWMutex
+	tokens        map[string]TokenInfo // access token → info
+	refreshTokens map[string]string    // refresh token → access token
 }
 
 // NewTokenStore returns an empty TokenStore.
 func NewTokenStore() *TokenStore {
-	return &TokenStore{tokens: make(map[string]TokenInfo)}
+	return &TokenStore{
+		tokens:        make(map[string]TokenInfo),
+		refreshTokens: make(map[string]string),
+	}
 }
 
-// Issue generates a new token for the given subject with the specified TTL,
-// stores it, and returns its TokenInfo.
+// generateHex returns a random hex string of the given byte length.
+func generateHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// Issue generates a new access token with paired refresh token for the given
+// subject with the specified TTL, stores both, and returns the TokenInfo.
 func (s *TokenStore) Issue(subject string, ttl time.Duration) TokenInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	b := make([]byte, 32)
-	rand.Read(b)
-	token := hex.EncodeToString(b)
+	accessToken := generateHex(32)
+	refreshToken := generateHex(32)
 
 	now := time.Now()
 	expiresAt := now.Add(ttl)
 	if ttl <= 0 {
-		// Ensure immediate expiry even when TTL rounds to zero.
 		expiresAt = now.Add(-1 * time.Second)
 	}
 	info := TokenInfo{
-		Token:     token,
-		Subject:   subject,
-		IssuedAt:  now,
-		ExpiresAt: expiresAt,
+		Token:        accessToken,
+		RefreshToken: refreshToken,
+		Subject:      subject,
+		IssuedAt:     now,
+		ExpiresAt:    expiresAt,
 	}
-	s.tokens[token] = info
+	s.tokens[accessToken] = info
+	s.refreshTokens[refreshToken] = accessToken
 	return info
 }
 
@@ -70,18 +83,66 @@ func (s *TokenStore) Validate(token string) (TokenInfo, bool) {
 	return info, true
 }
 
-// Revoke removes a single token. It is a no-op if the token does not exist.
+// Refresh accepts a refresh token, revokes the current access token, and
+// issues a new access token (with a new refresh token) for the same subject.
+// The second return value is false when the refresh token is unknown or the
+// underlying access token has expired.
+func (s *TokenStore) Refresh(refreshToken string, ttl time.Duration) (TokenInfo, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	accessToken, ok := s.refreshTokens[refreshToken]
+	if !ok {
+		return TokenInfo{}, false
+	}
+	info, ok := s.tokens[accessToken]
+	if !ok {
+		return TokenInfo{}, false
+	}
+	if time.Now().After(info.ExpiresAt) {
+		return TokenInfo{}, false
+	}
+
+	// Revoke the old pair.
+	delete(s.tokens, accessToken)
+	delete(s.refreshTokens, refreshToken)
+
+	// Issue a new pair.
+	subject := info.Subject
+	newAccess := generateHex(32)
+	newRefresh := generateHex(32)
+	now := time.Now()
+	newInfo := TokenInfo{
+		Token:        newAccess,
+		RefreshToken: newRefresh,
+		Subject:      subject,
+		IssuedAt:     now,
+		ExpiresAt:    now.Add(ttl),
+	}
+	s.tokens[newAccess] = newInfo
+	s.refreshTokens[newRefresh] = newAccess
+	return newInfo, true
+}
+
+// Revoke removes a single access token. It is a no-op if the token does not
+// exist. The paired refresh token is also removed.
 func (s *TokenStore) Revoke(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	info, ok := s.tokens[token]
+	if ok {
+		delete(s.refreshTokens, info.RefreshToken)
+	}
 	delete(s.tokens, token)
 }
 
-// RevokeAll removes all tokens.
+// RevokeAll removes all tokens and refresh tokens.
 func (s *TokenStore) RevokeAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tokens = make(map[string]TokenInfo)
+	s.refreshTokens = make(map[string]string)
 }
 
 // List returns all currently valid (non-expired) tokens. Expired tokens are
@@ -95,6 +156,7 @@ func (s *TokenStore) List() []TokenInfo {
 	for token, info := range s.tokens {
 		if now.After(info.ExpiresAt) {
 			delete(s.tokens, token)
+			delete(s.refreshTokens, info.RefreshToken)
 			continue
 		}
 		result = append(result, info)
