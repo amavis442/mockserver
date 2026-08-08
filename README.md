@@ -84,4 +84,4 @@ A missing `times` field is treated as `{"unlimited": true}`.
 
 ## License
 
-TBD
+[MIT](LICENSE.md)
