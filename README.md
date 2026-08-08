@@ -85,3 +85,10 @@ A missing `times` field is treated as `{"unlimited": true}`.
 ## License
 
 [MIT](LICENSE.md)
+
+## Acknowledgements
+
+Inspired by [MockServer](https://github.com/mock-server/mockserver-monorepo) —
+the mature, feature-rich Java mock server that defined the expectation/matcher/response
+model and the `/__admin` API convention. This Go port borrows those core ideas while
+staying intentionally minimal.
