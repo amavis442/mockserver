@@ -78,7 +78,7 @@ func mockHandler(store *engine.Store) http.HandlerFunc {
 			return
 		}
 
-		exp, ok := store.FindMatch(r.Method, r.URL.Path)
+		exp, ok := store.FindMatch(r.Method, r.URL.Path, r.Header)
 		if !ok {
 			writeJSON(w, http.StatusNotFound, map[string]string{
 				"error":  "no expectation matched",

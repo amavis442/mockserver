@@ -16,7 +16,6 @@ func TestUpsert_GeneratesID(t *testing.T) {
 	if result.ID == "" {
 		t.Error("expected auto-generated id")
 	}
-	// Must be stored.
 	if len(s.List()) != 1 {
 		t.Fatalf("len = %d, want 1", len(s.List()))
 	}
@@ -89,7 +88,7 @@ func TestFindMatch_BasicMatch(t *testing.T) {
 		Response: domain.Response{Status: 200},
 	})
 
-	_, ok := s.FindMatch("GET", "/hello")
+	_, ok := s.FindMatch("GET", "/hello", nil)
 	if !ok {
 		t.Fatal("expected match")
 	}
@@ -102,11 +101,11 @@ func TestFindMatch_NoMatchReturnsFalse(t *testing.T) {
 		Response: domain.Response{Status: 200},
 	})
 
-	_, ok := s.FindMatch("POST", "/a")
+	_, ok := s.FindMatch("POST", "/a", nil)
 	if ok {
 		t.Error("expected no match for wrong method")
 	}
-	_, ok2 := s.FindMatch("GET", "/b")
+	_, ok2 := s.FindMatch("GET", "/b", nil)
 	if ok2 {
 		t.Error("expected no match for wrong path")
 	}
@@ -122,13 +121,13 @@ func TestFindMatch_ExpiresAfterLimit(t *testing.T) {
 	})
 
 	// First hit — should match.
-	_, ok := s.FindMatch("GET", "/once")
+	_, ok := s.FindMatch("GET", "/once", nil)
 	if !ok {
 		t.Fatal("first match should succeed")
 	}
 
 	// Second hit — should miss (expired and removed).
-	_, ok = s.FindMatch("GET", "/once")
+	_, ok = s.FindMatch("GET", "/once", nil)
 	if ok {
 		t.Error("second match should fail after expiry")
 	}
@@ -149,7 +148,7 @@ func TestFindMatch_UnlimitedDoesNotExpire(t *testing.T) {
 	})
 
 	for i := 0; i < 10; i++ {
-		if _, ok := s.FindMatch("GET", "/always"); !ok {
+		if _, ok := s.FindMatch("GET", "/always", nil); !ok {
 			t.Fatalf("match #%d failed for unlimited expectation", i)
 		}
 	}
@@ -173,12 +172,68 @@ func TestFindMatch_FirstMatchWins(t *testing.T) {
 		Response: domain.Response{Status: 201},
 	})
 
-	exp, ok := s.FindMatch("GET", "/x")
+	exp, ok := s.FindMatch("GET", "/x", nil)
 	if !ok {
 		t.Fatal("expected match")
 	}
 	if exp.ID != "high" {
 		t.Errorf("id = %q, want high (higher priority wins)", exp.ID)
+	}
+}
+
+func TestFindMatch_HeaderMatching(t *testing.T) {
+	s := NewStore()
+	s.Upsert(domain.Expectation{
+		ID: "auth-required",
+		Request: domain.RequestMatcher{
+			Method:  "GET",
+			Path:    "/secure",
+			Headers: map[string]string{"Authorization": "Bearer secret"},
+		},
+		Response: domain.Response{Status: 200},
+	})
+
+	// Match with correct header
+	_, ok := s.FindMatch("GET", "/secure", map[string][]string{
+		"Authorization": {"Bearer secret"},
+	})
+	if !ok {
+		t.Error("expected match with correct header")
+	}
+
+	// No match with wrong header
+	_, ok = s.FindMatch("GET", "/secure", map[string][]string{
+		"Authorization": {"Bearer wrong"},
+	})
+	if ok {
+		t.Error("expected no match with wrong header value")
+	}
+
+	// No match without header
+	_, ok = s.FindMatch("GET", "/secure", nil)
+	if ok {
+		t.Error("expected no match without required header")
+	}
+}
+
+func TestFindMatch_HeaderMatchingCaseInsensitive(t *testing.T) {
+	s := NewStore()
+	s.Upsert(domain.Expectation{
+		ID: "case-test",
+		Request: domain.RequestMatcher{
+			Method:  "GET",
+			Path:    "/x",
+			Headers: map[string]string{"X-Custom": "val"},
+		},
+		Response: domain.Response{Status: 200},
+	})
+
+	// Match with different casing
+	_, ok := s.FindMatch("GET", "/x", map[string][]string{
+		"x-custom": {"val"},
+	})
+	if !ok {
+		t.Error("expected match with different header casing")
 	}
 }
 
@@ -232,7 +287,7 @@ func TestFindMatch_ReturnsCopy(t *testing.T) {
 		Response: domain.Response{Status: 200},
 	})
 
-	exp, ok := s.FindMatch("GET", "/copy")
+	exp, ok := s.FindMatch("GET", "/copy", nil)
 	if !ok {
 		t.Fatal("no match")
 	}

@@ -72,17 +72,17 @@ func (s *Store) Upsert(exp domain.Expectation) domain.Expectation {
 }
 
 // FindMatch scans expectations in order and returns the first available one
-// whose RequestMatcher matches the given method and path. On match the
-// expectation's Times are consumed, and if the expectation is exhausted it is
-// removed from the store. Returns a copy so callers cannot mutate internal
-// state. The second return value is false when no match is found.
-func (s *Store) FindMatch(method, path string) (domain.Expectation, bool) {
+// whose RequestMatcher matches the given request. On match the expectation's
+// Times are consumed, and if the expectation is exhausted it is removed from
+// the store. Returns a copy so callers cannot mutate internal state. The
+// second return value is false when no match is found.
+func (s *Store) FindMatch(method, path string, headers map[string][]string) (domain.Expectation, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for i := range s.exps {
 		exp := &s.exps[i]
-		if !exp.Request.Match(method, path) {
+		if !exp.Request.Match(method, path, headers) {
 			continue
 		}
 		if !exp.Times.Available() {
