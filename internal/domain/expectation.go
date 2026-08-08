@@ -2,6 +2,11 @@ package domain
 
 import "encoding/json"
 
+// AuthConfig specifies authentication requirements for an expectation.
+type AuthConfig struct {
+	Required bool `json:"required"`
+}
+
 // Response is the reply returned when an expectation matches an incoming
 // request. Body may be a JSON string, object, array, number, etc.; it is stored
 // verbatim as raw JSON and written to the client as-is.
@@ -19,6 +24,7 @@ type Expectation struct {
 	Times    Times          `json:"times"`
 	Request  RequestMatcher `json:"request"`
 	Response Response       `json:"response"`
+	Auth     *AuthConfig    `json:"auth,omitempty"`
 }
 
 // expectationAlias avoids infinite recursion in UnmarshalJSON while letting us
@@ -29,6 +35,7 @@ type expectationAlias struct {
 	Times    *Times         `json:"times"`
 	Request  RequestMatcher `json:"request"`
 	Response Response       `json:"response"`
+	Auth     *AuthConfig    `json:"auth,omitempty"`
 }
 
 // UnmarshalJSON defaults a missing "times" field to unlimited, so expectations
@@ -42,6 +49,7 @@ func (e *Expectation) UnmarshalJSON(data []byte) error {
 	e.Priority = a.Priority
 	e.Request = a.Request
 	e.Response = a.Response
+	e.Auth = a.Auth
 	if a.Times == nil {
 		e.Times = Times{Unlimited: true}
 	} else {
