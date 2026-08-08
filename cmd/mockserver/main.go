@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/amavis442/mockserver/internal/auth"
 	"github.com/amavis442/mockserver/internal/engine"
 	"github.com/amavis442/mockserver/internal/server"
 )
@@ -20,6 +21,7 @@ func main() {
 	flag.Parse()
 
 	store := engine.NewStore()
+	tokenStore := auth.NewTokenStore()
 
 	if *configFile != "" {
 		if err := server.LoadConfig(store, *configFile); err != nil {
@@ -29,7 +31,7 @@ func main() {
 		log.Printf("loaded %d expectations from %s", len(store.List()), *configFile)
 	}
 
-	handler := server.NewHandler(store)
+	handler := server.NewHandler(store, tokenStore)
 	addr := fmt.Sprintf(":%d", *port)
 
 	var useTLS bool

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/amavis442/mockserver/internal/auth"
 	"github.com/amavis442/mockserver/internal/domain"
 	"github.com/amavis442/mockserver/internal/engine"
 )
@@ -14,7 +15,8 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := engine.NewStore()
-	h := NewHandler(store)
+	tokenStore := auth.NewTokenStore()
+	h := NewHandler(store, tokenStore)
 	return httptest.NewServer(h)
 }
 
@@ -90,7 +92,6 @@ func TestAdmin_PostAndGetExpectations(t *testing.T) {
 		t.Errorf("unexpected request matcher: %+v", created.Request)
 	}
 
-	// List should contain it
 	resp := mustGet(t, s, "/__admin/expectations")
 	defer resp.Body.Close()
 
@@ -113,7 +114,6 @@ func TestAdmin_DeleteExpectation(t *testing.T) {
 		Response: domain.Response{Status: 200},
 	})
 
-	// Delete
 	req, _ := http.NewRequest(http.MethodDelete, s.URL+"/__admin/expectations/"+exp.ID, nil)
 	resp, err := s.Client().Do(req)
 	if err != nil {
@@ -124,7 +124,6 @@ func TestAdmin_DeleteExpectation(t *testing.T) {
 		t.Fatalf("DELETE status = %d, want 200", resp.StatusCode)
 	}
 
-	// List should be empty
 	listResp := mustGet(t, s, "/__admin/expectations")
 	defer listResp.Body.Close()
 	var list []domain.Expectation
@@ -171,7 +170,6 @@ func TestAdmin_Reset(t *testing.T) {
 		t.Fatalf("reset status = %d, want 200", resp.StatusCode)
 	}
 
-	// Should be empty now
 	listResp := mustGet(t, s, "/__admin/expectations")
 	defer listResp.Body.Close()
 	var list []domain.Expectation
@@ -218,7 +216,6 @@ func TestMock_404WhenNoMatch(t *testing.T) {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
 
-	// Body should mention no expectation matched
 	var body map[string]interface{}
 	expectJSON(t, resp, &body)
 	if msg, ok := body["error"].(string); !ok || msg == "" {
@@ -239,14 +236,12 @@ func TestMock_ExpiresAfterLimit(t *testing.T) {
 		Times: domain.Times{Remaining: 1},
 	})
 
-	// First hit — should match
 	r1 := mustGet(t, s, "/once")
 	r1.Body.Close()
 	if r1.StatusCode != 200 {
 		t.Errorf("first hit status = %d, want 200", r1.StatusCode)
 	}
 
-	// Second hit — should be 404 (expired)
 	r2 := mustGet(t, s, "/once")
 	r2.Body.Close()
 	if r2.StatusCode != http.StatusNotFound {
@@ -261,7 +256,6 @@ func TestMock_NotFoundIsJSON(t *testing.T) {
 	resp := mustGet(t, s, "/__not-admin")
 	defer resp.Body.Close()
 
-	// Must be JSON, not HTML plaintext
 	ct := resp.Header.Get("Content-Type")
 	if ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
@@ -333,7 +327,6 @@ func TestMock_FirstMatchWinsByPriority(t *testing.T) {
 
 	var body string
 	json.NewDecoder(resp.Body).Decode(&body)
-	// "high" was added second but has higher priority
 	if body != "high" {
 		t.Errorf("body = %q, want high", body)
 	}
@@ -364,14 +357,11 @@ func TestAdminRouteNotMatchedAsMock(t *testing.T) {
 	s := newTestServer(t)
 	defer s.Close()
 
-	// Add an expectation that would match /__admin/expectations if the
-	// mock-router handled it, but admin routes take precedence.
 	addExpectation(t, s, domain.Expectation{
 		Request:  domain.RequestMatcher{Method: "GET", Path: "/__admin/expectations"},
 		Response: domain.Response{Status: 418, Body: json.RawMessage(`"teapot"`)},
 	})
 
-	// Admin GET must NOT return the mock 418.
 	resp := mustGet(t, s, "/__admin/expectations")
 	defer resp.Body.Close()
 	if resp.StatusCode == 418 {
@@ -394,7 +384,6 @@ func TestMock_HeaderMatching(t *testing.T) {
 		Response: domain.Response{Status: 200, Body: json.RawMessage(`"ok"`)},
 	})
 
-	// Match with correct header
 	req, _ := http.NewRequest(http.MethodGet, s.URL+"/secure", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	resp, err := s.Client().Do(req)
@@ -406,7 +395,6 @@ func TestMock_HeaderMatching(t *testing.T) {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 
-	// No match with wrong header value
 	req2, _ := http.NewRequest(http.MethodGet, s.URL+"/secure", nil)
 	req2.Header.Set("Authorization", "Bearer wrong")
 	resp2, err := s.Client().Do(req2)
@@ -418,7 +406,6 @@ func TestMock_HeaderMatching(t *testing.T) {
 		t.Errorf("wrong header: status = %d, want 404", resp2.StatusCode)
 	}
 
-	// No match without header
 	resp3 := mustGet(t, s, "/secure")
 	resp3.Body.Close()
 	if resp3.StatusCode != http.StatusNotFound {
@@ -439,13 +426,144 @@ func TestMock_HeaderMatchingCaseInsensitive(t *testing.T) {
 		Response: domain.Response{Status: 200, Body: json.RawMessage(`"ok"`)},
 	})
 
-	// Different casing
 	req, _ := http.NewRequest(http.MethodGet, s.URL+"/x", nil)
 	req.Header.Set("x-custom", "val")
 	resp, err := s.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET /x: %v", err)
 	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// ── Auth ────────────────────────────────────────────────────────────────
+
+func TestAuth_TokenAdminAPI(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	resp, err := s.Client().Post(s.URL+"/__admin/auth/token", "application/json",
+		bytes.NewReader([]byte(`{"subject":"user-1"}`)))
+	if err != nil {
+		t.Fatalf("POST token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("issue token status = %d, want 201", resp.StatusCode)
+	}
+
+	var info auth.TokenInfo
+	expectJSON(t, resp, &info)
+	if info.Token == "" {
+		t.Error("expected token in response")
+	}
+	if info.Subject != "user-1" {
+		t.Errorf("subject = %q, want user-1", info.Subject)
+	}
+
+	listResp := mustGet(t, s, "/__admin/auth/tokens")
+	defer listResp.Body.Close()
+	var tokens []auth.TokenInfo
+	json.NewDecoder(listResp.Body).Decode(&tokens)
+	if len(tokens) != 1 {
+		t.Fatalf("token count = %d, want 1", len(tokens))
+	}
+
+	revokeReq, _ := http.NewRequest(http.MethodDelete, s.URL+"/__admin/auth/tokens", nil)
+	revokeResp, _ := s.Client().Do(revokeReq)
+	revokeResp.Body.Close()
+
+	emptyResp := mustGet(t, s, "/__admin/auth/tokens")
+	defer emptyResp.Body.Close()
+	var empty []auth.TokenInfo
+	json.NewDecoder(emptyResp.Body).Decode(&empty)
+	if len(empty) != 0 {
+		t.Errorf("token count after revoke = %d, want 0", len(empty))
+	}
+}
+
+func TestAuth_Required_AllowsValidToken(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	resp, err := s.Client().Post(s.URL+"/__admin/auth/token", "application/json",
+		bytes.NewReader([]byte(`{"subject":"u1"}`)))
+	if err != nil {
+		t.Fatalf("POST token: %v", err)
+	}
+	defer resp.Body.Close()
+	var info auth.TokenInfo
+	json.NewDecoder(resp.Body).Decode(&info)
+
+	addExpectation(t, s, domain.Expectation{
+		Request:  domain.RequestMatcher{Method: "GET", Path: "/secure"},
+		Response: domain.Response{Status: 200, Body: json.RawMessage(`"secret"`)},
+		Auth:     &domain.AuthConfig{Required: true},
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, s.URL+"/secure", nil)
+	req.Header.Set("Authorization", "Bearer "+info.Token)
+	r, err := s.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /secure: %v", err)
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", r.StatusCode)
+	}
+}
+
+func TestAuth_Required_RejectsMissingToken(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	addExpectation(t, s, domain.Expectation{
+		Request:  domain.RequestMatcher{Method: "GET", Path: "/secure"},
+		Response: domain.Response{Status: 200},
+		Auth:     &domain.AuthConfig{Required: true},
+	})
+
+	resp := mustGet(t, s, "/secure")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestAuth_Required_RejectsInvalidToken(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	addExpectation(t, s, domain.Expectation{
+		Request:  domain.RequestMatcher{Method: "GET", Path: "/secure"},
+		Response: domain.Response{Status: 200},
+		Auth:     &domain.AuthConfig{Required: true},
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, s.URL+"/secure", nil)
+	req.Header.Set("Authorization", "Bearer invalid-token")
+	r, err := s.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", r.StatusCode)
+	}
+}
+
+func TestAuth_NotRequired_AllowsWithoutToken(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	addExpectation(t, s, domain.Expectation{
+		Request:  domain.RequestMatcher{Method: "GET", Path: "/public"},
+		Response: domain.Response{Status: 200, Body: json.RawMessage(`"public"`)},
+	})
+
+	resp := mustGet(t, s, "/public")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
